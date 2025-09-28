@@ -1,0 +1,68 @@
+; =========================================================
+; PIONNEROS V4.0: 64-BIT GEÇİŞİ VE PAGING YAPILARI (hw_kernel.asm)
+; BÖLÜM 67: Boot_to_64bit
+; =========================================================
+
+; 1. GEREKLİ PAGING YAPILARININ TANIMLANMASI (64-bit için)
+
+; PML4 (Page Map Level 4) Adresi (En üst seviye sayfa haritası)
+PML4_ADDR equ 0x100000 
+; PDPT (Page Directory Pointer Table) Adresi
+PDPT_ADDR equ 0x101000
+; PD (Page Directory) Adresi
+PD_ADDR equ 0x102000
+
+; 2. 64-bit Geçiş Fonksiyonu
+global start_64bit_mode
+start_64bit_mode:
+    ; a. 64-bit Paging Yapılarını Kurma (Basit 1GB Eşleme)
+    
+    ; PML4'ü temizle (Zero out)
+    mov edi, PML4_ADDR
+    mov ecx, 512 ; 512 * 8 bayt = 4KB
+    xor eax, eax
+    rep stosd
+    
+    ; PML4 Giriş 0'ı PDPT'ye işaret et
+    mov dword [PML4_ADDR + 0], PDPT_ADDR | 0b11 ; Adres ve P, R/W, U/S bayrakları
+    
+    ; PDPT Giriş 0'ı PD'ye işaret et
+    mov dword [PDPT_ADDR + 0], PD_ADDR | 0b11 
+
+    ; PD Girişlerini 2MB'lık Büyük Sayfalara Eşle (1GB'a kadar eşleyelim)
+    mov esi, 0
+    mov ecx, 512 ; 512 adet 2MB sayfa = 1GB
+.map_2mb_pages:
+    ; Büyük Sayfa (PS) ve P, R/W, U/S bayrakları
+    mov dword [PD_ADDR + esi * 8], esi * 0x200000 | 0b10000011 
+    add esi, 1
+    loop .map_2mb_pages
+
+    ; b. CR4 kaydında PAE (Physical Address Extension) özelliğini aç
+    mov eax, cr4
+    or eax, 1 << 5
+    mov cr4, eax
+    
+    ; c. CR0 kaydında Paging'i aç
+    mov eax, cr0
+    or eax, 1 << 31
+    mov cr0, eax
+
+    ; d. Uzun Moda (Long Mode) geçiş (EFER kaydı)
+    mov ecx, 0xC0000080 ; EFER Kaydı Adresi
+    rdmsr
+    or eax, 1 << 8 ; LME (Long Mode Enable) bitini aç
+    wrmsr
+
+    ; e. 64-bit Kod Segmentini Yükle ve Atla
+    jmp 0x18:kernel_64bit_entry ; Yeni 64-bit GDT'deki segment 0x18'e atla
+    
+; Bu noktadan sonra CPU 64-bit modunda çalışıyor
+kernel_64bit_entry:
+    ; 64-bit Stack'i kur
+    mov rsp, 0x90000 
+    
+    ; C fonksiyonuna atla (64-bit kernel_main)
+    ; extern void kernel_main_64bit();
+    call kernel_main_64bit
+    jmp $
